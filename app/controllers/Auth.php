@@ -41,6 +41,11 @@ class Auth extends Controller {
             redirect('/');
         }
 
+        if (($user['status'] ?? 'active') !== 'active') {
+            $this->session->set_flashdata('login_error', 'This account is inactive.');
+            redirect('/');
+        }
+
         $this->session->set_userdata([
             'logged_in' => true,
             'user_id' => $user['id'],

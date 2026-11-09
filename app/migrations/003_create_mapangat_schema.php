@@ -110,21 +110,6 @@ class Create_mapangat_schema {
 
     private function seed_admin_user()
     {
-        $existing = $this->_lava->db->table('users')->where('username', 'Clapis')->get();
-        if (!$existing) {
-            $this->_lava->db->table('users')->insert([
-                'username' => 'Clapis',
-                'email' => 'clapis@mapangat.gov.ph',
-                'password' => password_hash('Clapis0224', PASSWORD_BCRYPT),
-                'role_id' => 1,
-                'full_name' => 'Clapis Admin',
-                'phone_number' => '09171234567',
-                'status' => 'active',
-                'created_at' => date('Y-m-d H:i:s'),
-                'updated_at' => date('Y-m-d H:i:s'),
-            ]);
-        }
-
         if ($this->table_has_columns('barangays', ['municipality', 'province'])
             && (int) $this->_lava->db->table('barangays')->count() === 0) {
             $this->_lava->db->table('barangays')->insert_batch([

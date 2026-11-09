@@ -79,6 +79,10 @@ class ApiController extends Controller {
             $this->api->respond_error('Invalid username or password', 401);
         }
 
+        if (($user['status'] ?? 'active') !== 'active') {
+            $this->api->respond_error('This account is inactive', 403);
+        }
+
         $role = $user['role'] ?? 'admin';
         $token_payload = [
             'id' => (int) $user['id'],
@@ -128,6 +132,106 @@ class ApiController extends Controller {
         }
 
         $this->api->refresh_access_token($refresh_token);
+    }
+
+    private function call_ledger_service($endpoint, $payload) {
+        $base_url = rtrim((string) getenv('LEDGER_SERVICE_URL'), '/');
+        $service_key = (string) getenv('LEDGER_SERVICE_KEY');
+        if ($base_url === '' || $service_key === '') {
+            $this->api->respond_error('Document ledger service is not configured', 503);
+        }
+
+        $service_url = parse_url($base_url);
+        $local_http = is_array($service_url)
+            && ($service_url['scheme'] ?? '') === 'http'
+            && in_array($service_url['host'] ?? '', ['localhost', '127.0.0.1'], true);
+        if (!is_array($service_url)
+            || empty($service_url['host'])
+            || (($service_url['scheme'] ?? '') !== 'https' && !$local_http)) {
+            $this->api->respond_error('Document ledger service URL must use HTTPS', 503);
+        }
+
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/json\r\nX-API-Key: {$service_key}\r\n",
+                'content' => json_encode($payload, JSON_UNESCAPED_SLASHES),
+                'timeout' => 10,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $response_body = @file_get_contents($base_url . $endpoint, false, $context);
+
+        if ($response_body === false) {
+            $this->api->respond_error('Document ledger service could not be reached', 503);
+        }
+
+        $status = 0;
+        foreach ($http_response_header ?? [] as $header) {
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $matches)) {
+                $status = (int) $matches[1];
+                break;
+            }
+        }
+
+        $result = json_decode($response_body, true);
+        if (!is_array($result)) {
+            $this->api->respond_error('Document ledger service returned an invalid response', 502);
+        }
+        if ($status < 200 || $status >= 300) {
+            $this->api->respond_error($result['error'] ?? 'Document ledger request failed', 502);
+        }
+
+        return $result;
+    }
+
+    private function validate_ledger_document($body) {
+        $reference = trim((string) ($body['document_reference'] ?? ''));
+        $document_hash = strtolower(trim((string) ($body['document_hash'] ?? '')));
+
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,119}$/', $reference)) {
+            $this->api->respond_error('A valid document reference is required', 400);
+        }
+        if (!preg_match('/^[a-f0-9]{64}$/', $document_hash)) {
+            $this->api->respond_error('A valid SHA-256 document hash is required', 400);
+        }
+
+        return [$reference, $document_hash];
+    }
+
+    public function anchor_document() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $user = $this->get_user_by_id((int) ($payload['sub'] ?? 0));
+        $role = strtolower((string) ($user['role'] ?? ''));
+        if (!in_array($role, ['admin', 'mpdo'], true)) {
+            $this->api->respond_error('Only MPDO staff can add documents to the ledger', 403);
+        }
+
+        $body = $this->api->body();
+        [$reference, $document_hash] = $this->validate_ledger_document($body);
+        $document_type = strtolower(trim((string) ($body['document_type'] ?? 'permit')));
+        if (!in_array($document_type, ['permit', 'location_clearance', 'other'], true)) {
+            $this->api->respond_error('Unsupported document type', 400);
+        }
+
+        $this->json_response($this->call_ledger_service('/internal/anchor', [
+            'document_reference' => $reference,
+            'document_hash' => $document_hash,
+            'document_type' => $document_type,
+            'metadata' => ['issued_by' => (string) ($user['username'] ?? '')],
+        ]), 201);
+    }
+
+    public function verify_document() {
+        $this->api->require_method('POST');
+        $body = $this->api->body();
+        [$reference, $document_hash] = $this->validate_ledger_document($body);
+
+        $this->json_response($this->call_ledger_service('/internal/verify', [
+            'document_reference' => $reference,
+            'document_hash' => $document_hash,
+        ]));
     }
 
     public function dashboard_stats() {

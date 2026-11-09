@@ -1,5 +1,7 @@
 # LavaLust Framework
 
+> MapAngat-specific database, Render deployment, and document-ledger setup is in [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 > A lightweight, fast PHP framework built for developers who want clean MVC architecture without unnecessary complexity or performance overhead.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)

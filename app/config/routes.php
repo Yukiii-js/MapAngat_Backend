@@ -61,8 +61,22 @@ $router->post('spatial-analysis/run-screening', 'Spatial::run_screening');
 $router->post('api/auth/login', 'ApiController::login');
 $router->get('api/auth/me', 'ApiController::me');
 $router->post('api/auth/refresh', 'ApiController::refresh');
+$router->post('api/ledger/anchor', 'ApiController::anchor_document');
+$router->post('api/ledger/verify', 'ApiController::verify_document');
 $router->get('api/dashboard/stats', 'ApiController::dashboard_stats');
 $router->get('api/projects', 'ApiController::projects');
 $router->get('api/clearances', 'ApiController::clearances');
 $router->get('api/map/points', 'ApiController::map_points');
 $router->get('api/health', 'ApiController::health');
+
+// Preflight requests must match the same route as the actual cross-origin request.
+$router->options('api/auth/login', 'ApiController::health');
+$router->options('api/auth/me', 'ApiController::health');
+$router->options('api/auth/refresh', 'ApiController::health');
+$router->options('api/ledger/anchor', 'ApiController::health');
+$router->options('api/ledger/verify', 'ApiController::health');
+$router->options('api/dashboard/stats', 'ApiController::health');
+$router->options('api/projects', 'ApiController::health');
+$router->options('api/clearances', 'ApiController::health');
+$router->options('api/map/points', 'ApiController::health');
+$router->options('api/health', 'ApiController::health');

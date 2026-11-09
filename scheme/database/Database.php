@@ -268,6 +268,25 @@ class Database {
             PDO::ATTR_EMULATE_PREPARES   => false,
         );
 
+        if ($driver === 'mysql' && !empty($database_config['ssl'])) {
+            if (!defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')) {
+                throw new PDOException('The PDO MySQL driver must support TLS for this database connection.');
+            }
+
+            $ssl_ca = $database_config['ssl_ca'] ?? '';
+            if ($ssl_ca !== '') {
+                if (!is_file($ssl_ca) || !is_readable($ssl_ca)) {
+                    throw new PDOException('DB_SSL_CA must point to a readable CA certificate file.');
+                }
+                if (!defined('PDO::MYSQL_ATTR_SSL_CA')) {
+                    throw new PDOException('The PDO MySQL driver does not support a configured TLS CA certificate.');
+                }
+                $options[PDO::MYSQL_ATTR_SSL_CA] = $ssl_ca;
+            }
+
+            $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = $ssl_ca !== '';
+        }
+
         try {
             $this->db = new PDO($dsn, $username, $password, $options);
             $this->driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);

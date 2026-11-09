@@ -229,7 +229,7 @@ class Api
     {
         if ($this->users_role_table !== '') {
             $stmt = $this->_lava->db->raw(
-                "SELECT u.id, r.{$this->roles_name_column} AS role
+                "SELECT u.id, u.status, r.{$this->roles_name_column} AS role
                  FROM {$this->users_table} u
                  LEFT JOIN {$this->users_role_table} r
                     ON r.{$this->roles_primary_key} = u.{$this->users_role_column}
@@ -238,7 +238,7 @@ class Api
             );
         } else {
             $stmt = $this->_lava->db->raw(
-                "SELECT id, {$this->users_role_column} AS role
+                "SELECT id, status, {$this->users_role_column} AS role
                  FROM {$this->users_table} WHERE id = ? LIMIT 1",
                 [$user_id]
             );
@@ -621,7 +621,7 @@ class Api
         if ($this->verify_user) {
             $user = $this->get_user_role_record($payload['sub']);
 
-            if (!$user) {
+            if (!$user || ($user['status'] ?? 'active') !== 'active') {
                 $this->respond_error('Unauthorized', 401);
             }
 
@@ -714,7 +714,7 @@ class Api
 
         $user = $this->get_user_role_record($payload['sub']);
 
-        if (!$user) {
+        if (!$user || ($user['status'] ?? 'active') !== 'active') {
             $this->respond_error('User not found', 403);
         }
 
