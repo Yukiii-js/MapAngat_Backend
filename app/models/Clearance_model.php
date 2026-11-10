@@ -3,47 +3,101 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
 class Clearance_model extends Model {
 
+    public function is_available() {
+        $stmt = $this->db->raw(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = ?",
+            ['location_clearances']
+        );
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
     public function get_all() {
-        $stmt = $this->db->raw('SHOW COLUMNS FROM location_clearances');
-        $columns = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'Field');
-        $normalized_columns = ['application_id', 'project_type', 'barangay'];
-
-        if (count(array_intersect($normalized_columns, $columns)) !== count($normalized_columns)) {
-            $stmt = $this->db->raw(
-                "SELECT id,
-                        CONCAT('LC-', YEAR(created_at), '-', LPAD(id, 3, '0')) AS application_id,
-                        applicant_name,
-                        COALESCE(NULLIF(business_name, ''), 'Location clearance') AS project_type,
-                        TRIM(SUBSTRING_INDEX(COALESCE(location, ''), ',', 1)) AS barangay,
-                        status,
-                        NULL AS lat,
-                        NULL AS lng,
-                        created_at,
-                        updated_at
-                 FROM location_clearances
-                 ORDER BY created_at DESC"
-            );
-
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!$this->is_available()) {
+            return [];
         }
+
+        $columns_stmt = $this->db->raw(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ?",
+            ['location_clearances']
+        );
+        $columns = array_column($columns_stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
+        $normalized = ['application_id', 'project_type', 'barangay'];
+        $has_normalized_schema = count(array_intersect($normalized, $columns)) === count($normalized);
 
         $details_stmt = $this->db->raw(
             "SELECT COUNT(*) FROM information_schema.tables
              WHERE table_schema = DATABASE() AND table_name = ?",
             ['clearance_details']
         );
-        if ((int) $details_stmt->fetchColumn() === 0) {
-            return $this->db->table('location_clearances')->order_by('created_at', 'DESC')->get_all();
+        $has_details = $has_normalized_schema && (int) $details_stmt->fetchColumn() > 0;
+        if ($has_details) {
+            $detail_columns_stmt = $this->db->raw(
+                "SELECT column_name FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ?",
+                ['clearance_details']
+            );
+            $detail_columns = array_column($detail_columns_stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
+            $required_details = [
+                'application_id', 'parcel_geojson', 'area_sqm', 'land_use_category',
+                'approved_land_use', 'permit_valid_until', 'qr_reference', 'permit_status',
+                'certificate_type', 'screening_results',
+            ];
+            $has_details = count(array_intersect($required_details, $detail_columns)) === count($required_details);
         }
 
-        $stmt = $this->db->raw(
-            "SELECT c.*, d.parcel_geojson, d.area_sqm, d.land_use_category, d.approved_land_use,
-                    d.permit_valid_until, d.qr_reference, d.permit_status, d.certificate_type,
-                    d.screening_results
-             FROM location_clearances c
-             LEFT JOIN clearance_details d ON d.application_id = c.application_id
-             ORDER BY c.created_at DESC"
+        $column = static function ($name, $fallback) use ($columns) {
+            return in_array($name, $columns, true) ? "c.`{$name}`" : $fallback;
+        };
+        $id = $column('id', 'NULL');
+        $created_at = $column('created_at', 'NULL');
+        $application_id = $has_normalized_schema
+            ? $column('application_id', 'NULL')
+            : (in_array('id', $columns, true) && in_array('created_at', $columns, true)
+                ? "CONCAT('LC-', YEAR(c.`created_at`), '-', LPAD(c.`id`, 3, '0'))"
+                : 'NULL');
+        $project_type = $column(
+            'project_type',
+            $column('business_name', "'Location clearance'")
         );
+        $barangay = $column(
+            'barangay',
+            in_array('location', $columns, true)
+                ? "TRIM(SUBSTRING_INDEX(COALESCE(c.`location`, ''), ',', 1))"
+                : "''"
+        );
+        $select = [
+            "{$id} AS id",
+            "{$application_id} AS application_id",
+            $column('applicant_name', "''") . ' AS applicant_name',
+            "{$project_type} AS project_type",
+            "{$barangay} AS barangay",
+            $column('status', "'Pending'") . ' AS status',
+            $column('lat', 'NULL') . ' AS lat',
+            $column('lng', 'NULL') . ' AS lng',
+            "{$created_at} AS created_at",
+            $column('updated_at', 'NULL') . ' AS updated_at',
+        ];
+        if ($has_details) {
+            foreach ([
+                'parcel_geojson', 'area_sqm', 'land_use_category', 'approved_land_use',
+                'permit_valid_until', 'qr_reference', 'permit_status', 'certificate_type',
+                'screening_results',
+            ] as $detail_column) {
+                $select[] = "d.`{$detail_column}` AS `{$detail_column}`";
+            }
+        }
+
+        $sql = 'SELECT ' . implode(', ', $select) . ' FROM location_clearances c';
+        if ($has_details) {
+            $sql .= ' LEFT JOIN clearance_details d ON d.application_id = c.application_id';
+        }
+        $sql .= in_array('created_at', $columns, true)
+            ? ' ORDER BY c.`created_at` DESC'
+            : (in_array('id', $columns, true) ? ' ORDER BY c.`id` DESC' : '');
+
+        $stmt = $this->db->raw($sql);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 

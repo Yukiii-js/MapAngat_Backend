@@ -425,6 +425,12 @@ class ApiController extends Controller {
         $this->api->require_method('GET');
         $this->api->require_jwt();
 
+        if (!$this->Clearance_model->is_available()) {
+            $this->api->respond_error(
+                'Location clearance storage is not configured. Apply the MapAngat database schema before loading clearance records.',
+                503
+            );
+        }
         $clearances = $this->Clearance_model->get_all();
         $this->json_response(['clearances' => $clearances]);
     }
