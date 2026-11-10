@@ -3,15 +3,16 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
 class Clearance_model extends Model {
 
+    private function column_names($table) {
+        return $this->db->raw(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ?",
+            [$table]
+        )->fetchAll(PDO::FETCH_COLUMN, 0);
+    }
+
     private function columns() {
-        return array_column(
-            $this->db->raw(
-                "SELECT column_name FROM information_schema.columns
-                 WHERE table_schema = DATABASE() AND table_name = ?",
-                ['location_clearances']
-            )->fetchAll(PDO::FETCH_ASSOC),
-            'column_name'
-        );
+        return $this->column_names('location_clearances');
     }
 
     private function first_column($columns, $candidates) {
@@ -51,12 +52,7 @@ class Clearance_model extends Model {
         $issues = [];
 
         foreach ($required as $table => $required_columns) {
-            $stmt = $this->db->raw(
-                "SELECT column_name FROM information_schema.columns
-                 WHERE table_schema = DATABASE() AND table_name = ?",
-                [$table]
-            );
-            $columns = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
+            $columns = $this->column_names($table);
 
             if ($columns === []) {
                 $issues[] = $table . ' table';
@@ -87,12 +83,7 @@ class Clearance_model extends Model {
         );
         $has_details = $has_normalized_schema && (int) $details_stmt->fetchColumn() > 0;
         if ($has_details) {
-            $detail_columns_stmt = $this->db->raw(
-                "SELECT column_name FROM information_schema.columns
-                 WHERE table_schema = DATABASE() AND table_name = ?",
-                ['clearance_details']
-            );
-            $detail_columns = array_column($detail_columns_stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
+            $detail_columns = $this->column_names('clearance_details');
             $required_details = [
                 'application_id', 'parcel_geojson', 'area_sqm', 'land_use_category',
                 'approved_land_use', 'permit_valid_until', 'qr_reference', 'permit_status',
