@@ -148,7 +148,9 @@ class Clearance_model extends Model {
 
         $sql = 'SELECT ' . implode(', ', $select) . ' FROM location_clearances c';
         if ($has_details) {
-            $sql .= ' LEFT JOIN clearance_details d ON d.application_id = c.application_id';
+            $sql .= ' LEFT JOIN clearance_details d
+                      ON d.application_id COLLATE utf8mb4_unicode_ci
+                         = c.application_id COLLATE utf8mb4_unicode_ci';
         }
         $sql .= $date_column !== null
             ? " ORDER BY c.`{$date_column}` DESC"
