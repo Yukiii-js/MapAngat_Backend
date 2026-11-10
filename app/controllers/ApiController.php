@@ -440,7 +440,7 @@ class ApiController extends Controller {
         $this->api->require_jwt();
         if (!$this->Clearance_model->supports_workflow_create()) {
             $this->api->respond_error(
-                'Location-clearance workflows are not installed. Apply database/005_spatial_workflows.sql before submitting applications.',
+                'The connected database is missing required location-clearance tables or columns. Verify DB_NAME; apply database/005_spatial_workflows.sql only if its tables are absent.',
                 503
             );
         }

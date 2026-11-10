@@ -2,16 +2,11 @@
 
 ## Database
 
-Select the target MySQL database in your SQL client and run [`database/mapangat.sql`](./database/mapangat.sql). It creates missing tables used by MapAngat and seeds the `Admin` role and initial MPDO account:
-
-- Username: `mpdo`
-- Initial password: `mpdo123`
-
-Change the initial password before using the deployment with real records. The password is stored as a bcrypt hash. The schema script uses `CREATE TABLE IF NOT EXISTS`, so it adds missing tables on an existing database without changing existing table definitions; take a backup before applying it to an existing installation. It does not import demo records.
+The supplied database dump targets the MySQL schema `defaultdb` and already includes the location-clearance and spatial-workflow tables. Configure the backend and ledger service to use that same schema. Do not import the full dump over a live database: it contains `DROP TABLE` statements and existing records.
 
 The application uses `migrations`, `roles`, `users`, `refresh_tokens`, `barangays`, `projects`, `location_clearances`, `inspections`, and `blockchain_ledger`. `field_compliance_permits` and `hazard_reports` are optional integrations checked by the map API; they are not required by this project.
 
-The spatial-clearance, project progress, field inspection, and GeoJSON layer workflows also require the tables in [`database/005_spatial_workflows.sql`](./database/005_spatial_workflows.sql). Back up the database, then run that additive SQL script in the same MySQL database before deploying the updated API. It does not modify existing records. The equivalent application migration is [`app/migrations/005_create_spatial_workflow_tables.php`](./app/migrations/005_create_spatial_workflow_tables.php); application migrations are disabled by default.
+The spatial-clearance, project progress, field inspection, and GeoJSON layer workflows require the tables in [`database/005_spatial_workflows.sql`](./database/005_spatial_workflows.sql). Run that additive SQL script only if those tables are absent from the database used by the API; it does not modify existing records. The equivalent application migration is [`app/migrations/005_create_spatial_workflow_tables.php`](./app/migrations/005_create_spatial_workflow_tables.php); application migrations are disabled by default.
 
 New location-clearance submissions also require the normalized `location_clearances` columns (`application_id`, `applicant_name`, `project_type`, `barangay`, `status`, `lat`, `lng`, and `created_at`). An older table is not rewritten automatically; migrate its existing records and schema before enabling submissions. The API returns a setup error rather than saving a partial application when the required schema is missing. The camera scanner and geotagging require HTTPS and browser permission; the configured Permissions-Policy allows these features for the same-origin app.
 
@@ -34,7 +29,7 @@ The frontend is a static site, the LavaLust API is a Docker web service, and the
 - Root directory: `MapAngat_Backend`
 - Runtime: Docker, using the included `Dockerfile`
 - Set `APP_ENV=production` and `APP_KEY` to a new random value.
-- Set `DB_DRIVER=mysql`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, and `DB_CHARSET=utf8mb4` for the selected MySQL database. The application accepts `DB_PASSWORD` or the existing `DB_PASS` setting.
+- Set `DB_DRIVER=mysql`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME=defaultdb`, and `DB_CHARSET=utf8mb4` for the database in the supplied dump. The application accepts `DB_PASSWORD` or the existing `DB_PASS` setting.
 - Remote MySQL connections use TLS by default. If the provider supplies a CA certificate, add it as a secret file and set `DB_SSL_CA` to its path for certificate validation. Set `DB_SSL=false` only for local development.
 - Set independent, randomly generated `JWT_SECRET` and `REFRESH_TOKEN_KEY` values (at least 32 characters each).
 - Set `CORS_ALLOWED_ORIGINS` to the exact frontend origin, without a trailing slash. Multiple origins may be comma-separated.
