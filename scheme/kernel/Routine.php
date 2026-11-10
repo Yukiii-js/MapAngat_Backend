@@ -190,13 +190,36 @@ if ( ! function_exists('_exception_handler'))
 		{
 			$logger = load_class('logger', 'kernel');
 			$logger->log('error', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+		} else {
+			error_log(sprintf(
+				'Uncaught %s: %s in %s:%d',
+				get_class($e),
+				$e->getMessage(),
+				$e->getFile(),
+				$e->getLine()
+			));
 		}
-		if(strtolower(config_item('environment') == 'development'))
+
+		http_response_code(500);
+		if (strtolower(config_item('environment')) === 'development')
 		{
 			$exception = load_class('Errors', 'kernel');
 			$exception->show_exception($e);
 		}
-		
+
+		$path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+		if (is_string($path) && strpos($path, '/api/') === 0) {
+			if (!headers_sent()) {
+				header('Content-Type: application/json; charset=utf-8');
+			}
+			echo json_encode(['error' => 'Internal server error']);
+			return;
+		}
+
+		if (!headers_sent()) {
+			header('Content-Type: text/plain; charset=utf-8');
+		}
+		echo 'Internal server error';
 	}
 }
 
