@@ -156,6 +156,7 @@ class Security_headers
         }
         header('X-Frame-Options: ' . $c['frame_options']);
         $this->common();
+        $this->cors();
         return $this;
     }
 
