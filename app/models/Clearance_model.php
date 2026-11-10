@@ -4,11 +4,15 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 class Clearance_model extends Model {
 
     private function column_names($table) {
-        return $this->db->raw(
+        $rows = $this->db->raw(
             "SELECT column_name FROM information_schema.columns
              WHERE table_schema = DATABASE() AND table_name = ?",
             [$table]
-        )->fetchAll(PDO::FETCH_COLUMN, 0);
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        return array_map(static function ($row) {
+            return (string) reset($row);
+        }, $rows);
     }
 
     private function columns() {
