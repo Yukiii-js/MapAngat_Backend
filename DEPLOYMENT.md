@@ -11,6 +11,8 @@ Change the initial password before using the deployment with real records. The p
 
 The application uses `migrations`, `roles`, `users`, `refresh_tokens`, `barangays`, `projects`, `location_clearances`, `inspections`, and `blockchain_ledger`. `field_compliance_permits` and `hazard_reports` are optional integrations checked by the map API; they are not required by this project.
 
+The spatial-clearance, project progress, field inspection, and GeoJSON layer workflows also require the tables in [`database/005_spatial_workflows.sql`](./database/005_spatial_workflows.sql). Back up the database, then run that additive SQL script in the same MySQL database before deploying the updated API. It does not modify existing records. The equivalent application migration is [`app/migrations/005_create_spatial_workflow_tables.php`](./app/migrations/005_create_spatial_workflow_tables.php); application migrations are disabled by default.
+
 To replace the initial password, generate a hash on a trusted machine and update only the hash:
 
 ```sh
@@ -36,6 +38,8 @@ The frontend is a static site, the LavaLust API is a Docker web service, and the
 - Set `CORS_ALLOWED_ORIGINS` to the exact frontend origin, without a trailing slash. Multiple origins may be comma-separated.
 - Set `LEDGER_SERVICE_URL` to the deployed ledger service URL and `LEDGER_SERVICE_KEY` to the shared random key described below.
 - The API health check is `/api/health`.
+
+The MPDO workspace now includes location-clearance intake and lifecycle management, project progress and budget updates, field QR verification and geotagged inspection logs, spatial analytics, and CSV/printable report exports. Parcel screening uses only GeoJSON planning layers uploaded by authorized MPDO staff at Spatial Intelligence & Analysis. Until authoritative zoning and hazard datasets are configured, the application explicitly reports that screening is unavailable; it does not infer a zoning decision from demo data.
 
 The Docker entrypoint listens on Render's `PORT`. The Vite development proxy targets LavaLust's local default port, `3000`.
 

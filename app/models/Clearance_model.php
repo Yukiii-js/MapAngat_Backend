@@ -27,11 +27,38 @@ class Clearance_model extends Model {
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
 
-        return $this->db->table('location_clearances')->order_by('created_at', 'DESC')->get_all();
+        $details_stmt = $this->db->raw(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = ?",
+            ['clearance_details']
+        );
+        if ((int) $details_stmt->fetchColumn() === 0) {
+            return $this->db->table('location_clearances')->order_by('created_at', 'DESC')->get_all();
+        }
+
+        $stmt = $this->db->raw(
+            "SELECT c.*, d.parcel_geojson, d.area_sqm, d.land_use_category, d.approved_land_use,
+                    d.permit_valid_until, d.qr_reference, d.permit_status, d.certificate_type,
+                    d.screening_results
+             FROM location_clearances c
+             LEFT JOIN clearance_details d ON d.application_id = c.application_id
+             ORDER BY c.created_at DESC"
+        );
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function insert_application($data) {
         return $this->db->table('location_clearances')->insert($data);
+    }
+
+    public function get_by_reference($reference) {
+        foreach ($this->get_all() as $application) {
+            if (strcasecmp((string) ($application['application_id'] ?? ''), $reference) === 0
+                || strcasecmp((string) ($application['qr_reference'] ?? ''), $reference) === 0) {
+                return $application;
+            }
+        }
+        return null;
     }
 
     public function get_counts_by_status() {

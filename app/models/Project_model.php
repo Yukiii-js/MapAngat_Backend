@@ -18,7 +18,23 @@ class Project_model extends Model {
             return [];
         }
 
-        return $this->db->table('projects')->get_all();
+        $stmt = $this->db->raw(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = ?",
+            ['project_metrics']
+        );
+        if ((int) $stmt->fetchColumn() === 0) {
+            return $this->db->table('projects')->get_all();
+        }
+
+        return $this->db->raw(
+            "SELECT p.*, COALESCE(m.target_progress, 100) AS target_progress,
+                    COALESCE(m.allocated_budget, 0) AS allocated_budget,
+                    COALESCE(m.spent_budget, 0) AS spent_budget
+             FROM projects p
+             LEFT JOIN project_metrics m ON m.project_id = p.id
+             ORDER BY p.created_at DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function get_counts_by_status() {

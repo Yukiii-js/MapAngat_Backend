@@ -10,6 +10,8 @@ class ApiController extends Controller {
         $this->call->library('api');
         $this->call->model('Clearance_model');
         $this->call->model('Project_model');
+        $this->call->model('Workflow_model');
+        $this->call->model('Spatial_model');
     }
 
     private function json_response($data, $status = 200) {
@@ -61,6 +63,98 @@ class ApiController extends Controller {
         );
 
         return (int) $stmt->fetchColumn() > 0;
+    }
+
+    private function require_mpdo($payload) {
+        $user = $this->get_user_by_id((int) ($payload['sub'] ?? 0));
+        if (!in_array(strtolower((string) ($user['role'] ?? '')), ['admin', 'mpdo'], true)) {
+            $this->api->respond_error('Only MPDO staff can perform this action', 403);
+        }
+        return $user;
+    }
+
+    private function validate_geometry($value) {
+        if (is_string($value)) {
+            $value = json_decode($value, true);
+        }
+        if (isset($value['type']) && $value['type'] === 'Feature') {
+            $value = $value['geometry'] ?? null;
+        }
+        if (!is_array($value) || !in_array($value['type'] ?? '', ['Point', 'Polygon', 'MultiPolygon'], true)) {
+            $this->api->respond_error('A GeoJSON Point, Polygon or MultiPolygon is required', 400);
+        }
+        $coordinates = $value['coordinates'] ?? null;
+        if (!$this->valid_coordinates($coordinates)) {
+            $this->api->respond_error('The GeoJSON contains invalid or out-of-range coordinates', 400);
+        }
+        if ($value['type'] === 'Polygon' && !$this->valid_polygon($coordinates)) {
+            $this->api->respond_error('Parcel polygons must contain at least four positions', 400);
+        }
+        if ($value['type'] === 'MultiPolygon') {
+            if (empty($coordinates)) {
+                $this->api->respond_error('A MultiPolygon must contain at least one polygon', 400);
+            }
+            foreach ($coordinates as $polygon) {
+                if (!$this->valid_polygon($polygon)) {
+                    $this->api->respond_error('Parcel polygons must contain closed rings with at least four positions', 400);
+                }
+            }
+        }
+        return $value;
+    }
+
+    private function valid_polygon($rings) {
+        if (!is_array($rings) || empty($rings)) {
+            return false;
+        }
+        foreach ($rings as $ring) {
+            if (!is_array($ring) || count($ring) < 4
+                || abs((float) $ring[0][0] - (float) $ring[count($ring) - 1][0]) > 1e-10
+                || abs((float) $ring[0][1] - (float) $ring[count($ring) - 1][1]) > 1e-10) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function valid_coordinates($value) {
+        if (!is_array($value) || count($value) < 2) {
+            return false;
+        }
+        if (is_numeric($value[0] ?? null) && is_numeric($value[1] ?? null)) {
+            return is_finite((float) $value[0]) && is_finite((float) $value[1])
+                && (float) $value[0] >= -180 && (float) $value[0] <= 180
+                && (float) $value[1] >= -90 && (float) $value[1] <= 90;
+        }
+        foreach ($value as $coordinate) {
+            if (!$this->valid_coordinates($coordinate)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function validate_optional_coordinate($value, $minimum, $maximum) {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_numeric($value) || !is_finite((float) $value)
+            || (float) $value < $minimum || (float) $value > $maximum) {
+            $this->api->respond_error('A valid latitude and longitude are required', 400);
+        }
+        return (float) $value;
+    }
+
+    private function validate_photo_url($value) {
+        $value = trim((string) ($value ?? ''));
+        if ($value === '') {
+            return null;
+        }
+        if (strlen($value) > 2048 || !filter_var($value, FILTER_VALIDATE_URL)
+            || !in_array(strtolower((string) parse_url($value, PHP_URL_SCHEME)), ['https', 'http'], true)) {
+            $this->api->respond_error('Photo URL must be a valid HTTP or HTTPS URL', 400);
+        }
+        return $value;
     }
 
     public function login() {
@@ -262,12 +356,319 @@ class ApiController extends Controller {
         $this->json_response(['projects' => $projects]);
     }
 
+    public function project_updates() {
+        $this->api->require_method('GET');
+        $this->api->require_jwt();
+        $project_id = (int) $this->io->get('project_id');
+        if ($project_id < 1) {
+            $this->api->respond_error('A valid project ID is required', 400);
+        }
+        $this->json_response(['updates' => $this->Workflow_model->get_project_updates($project_id)]);
+    }
+
+    public function save_project_update() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $user = $this->require_mpdo($payload);
+        $body = $this->api->body();
+        $project_id = (int) ($body['project_id'] ?? 0);
+        $project = null;
+        foreach ($this->Project_model->get_all() as $row) {
+            if ((int) ($row['id'] ?? 0) === $project_id) {
+                $project = $row;
+                break;
+            }
+        }
+        if (!$project) {
+            $this->api->respond_error('Project not found', 404);
+        }
+
+        $completion = $body['completion'] ?? null;
+        $target_progress = $body['target_progress'] ?? 100;
+        $allocated_budget = $body['allocated_budget'] ?? 0;
+        $budget_spent = $body['budget_spent'] ?? 0;
+        $status = trim((string) ($body['status'] ?? ''));
+        $note = trim((string) ($body['update_note'] ?? ''));
+        if (!is_numeric($completion) || (float) $completion < 0 || (float) $completion > 100
+            || !is_numeric($target_progress) || (float) $target_progress < 0 || (float) $target_progress > 100
+            || !is_numeric($allocated_budget) || (float) $allocated_budget < 0
+            || !is_numeric($budget_spent) || (float) $budget_spent < 0
+            || (float) $budget_spent > (float) $allocated_budget
+            || !in_array($status, ['On track', 'At risk', 'Delayed'], true)
+            || $note === '' || strlen($note) > 5000) {
+            $this->api->respond_error('Enter valid progress, budget, status and update details', 400);
+        }
+
+        $latitude = $this->validate_optional_coordinate($body['latitude'] ?? null, -90, 90);
+        $longitude = $this->validate_optional_coordinate($body['longitude'] ?? null, -180, 180);
+        if (($latitude === null) !== ($longitude === null)) {
+            $this->api->respond_error('Provide both latitude and longitude for a geotagged update', 400);
+        }
+
+        $this->Workflow_model->add_project_update([
+            'project_id' => $project_id,
+            'completion' => (float) $completion,
+            'target_progress' => (float) $target_progress,
+            'allocated_budget' => (float) $allocated_budget,
+            'budget_spent' => (float) $budget_spent,
+            'status' => $status,
+            'update_note' => $note,
+            'photo_url' => $this->validate_photo_url($body['photo_url'] ?? ''),
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'created_by' => (string) ($user['username'] ?? 'MPDO'),
+        ]);
+        $this->json_response(['message' => 'Project progress update saved'], 201);
+    }
+
     public function clearances() {
         $this->api->require_method('GET');
         $this->api->require_jwt();
 
         $clearances = $this->Clearance_model->get_all();
         $this->json_response(['clearances' => $clearances]);
+    }
+
+    public function create_clearance() {
+        $this->api->require_method('POST');
+        $this->api->require_jwt();
+        $body = $this->api->body();
+        $applicant = trim((string) ($body['applicant_name'] ?? ''));
+        $project_type = trim((string) ($body['project_type'] ?? ''));
+        $barangay = trim((string) ($body['barangay'] ?? ''));
+        $land_use = trim((string) ($body['land_use_category'] ?? ''));
+        if ($applicant === '' || strlen($applicant) > 150 || $project_type === '' || strlen($project_type) > 150
+            || $barangay === '' || strlen($barangay) > 100
+            || !in_array($land_use, ['Agriculture', 'Commercial', 'Residential', 'Institutional', 'Industrial', 'Other'], true)) {
+            $this->api->respond_error('Complete the applicant, project, barangay and land-use fields', 400);
+        }
+
+        $geometry = $this->validate_geometry($body['parcel_geojson'] ?? null);
+        $layers = $this->Workflow_model->get_spatial_layers();
+        $screening = $this->Spatial_model->screen_geometry($geometry, $layers);
+        $area_sqm = $this->Spatial_model->calculate_area($geometry);
+        $positions = $geometry['type'] === 'Point'
+            ? [$geometry['coordinates']]
+            : ($geometry['type'] === 'Polygon' ? $geometry['coordinates'][0] : $geometry['coordinates'][0][0]);
+        $longitude = 0.0;
+        $latitude = 0.0;
+        foreach ($positions as $position) {
+            $longitude += (float) $position[0];
+            $latitude += (float) $position[1];
+        }
+        $longitude /= count($positions);
+        $latitude /= count($positions);
+        $application_id = 'LC-' . date('Y') . '-' . strtoupper(bin2hex(random_bytes(6)));
+        $db = lava_instance()->db;
+        $db->raw('START TRANSACTION');
+        try {
+            $this->Clearance_model->insert_application([
+                'application_id' => $application_id,
+                'applicant_name' => $applicant,
+                'project_type' => $project_type,
+                'barangay' => $barangay,
+                'status' => 'Submitted',
+                'lat' => $latitude,
+                'lng' => $longitude,
+                'created_at' => date('Y-m-d H:i:s'),
+            ]);
+            $this->Workflow_model->add_clearance_details([
+                'application_id' => $application_id,
+                'parcel_geojson' => json_encode($geometry, JSON_UNESCAPED_SLASHES),
+                'area_sqm' => $area_sqm,
+                'land_use_category' => $land_use,
+                'screening_results' => json_encode($screening, JSON_UNESCAPED_SLASHES),
+            ]);
+            $db->raw('COMMIT');
+        } catch (Throwable $error) {
+            $db->raw('ROLLBACK');
+            throw $error;
+        }
+        $this->json_response([
+            'application_id' => $application_id,
+            'status' => 'Submitted',
+            'area_sqm' => round($area_sqm, 2),
+            'screening' => $screening,
+            'layers_available' => count($layers),
+        ], 201);
+    }
+
+    public function lookup_clearance() {
+        $this->api->require_method('GET');
+        $this->api->require_jwt();
+        $reference = trim((string) $this->io->get('reference'));
+        if ($reference === '' || strlen($reference) > 80) {
+            $this->api->respond_error('Enter a clearance ID or QR reference', 400);
+        }
+        $clearance = $this->Clearance_model->get_by_reference($reference);
+        if (!$clearance) {
+            $this->api->respond_error('Clearance record not found', 404);
+        }
+        $permit_status = (string) ($clearance['permit_status'] ?? '');
+        if ($permit_status === 'Valid' && !empty($clearance['permit_valid_until'])
+            && $clearance['permit_valid_until'] < date('Y-m-d')) {
+            $permit_status = 'Expired';
+        }
+        $clearance['permit_validity'] = $permit_status ?: 'Not issued';
+        $clearance['screening_results'] = json_decode((string) ($clearance['screening_results'] ?? '[]'), true) ?: [];
+        $clearance['parcel_geojson'] = json_decode((string) ($clearance['parcel_geojson'] ?? ''), true);
+        $this->json_response(['clearance' => $clearance]);
+    }
+
+    public function update_clearance_status() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $this->require_mpdo($payload);
+        $body = $this->api->body();
+        $application_id = trim((string) ($body['application_id'] ?? ''));
+        $status = trim((string) ($body['status'] ?? ''));
+        $allowed = ['Submitted', 'Under Review', 'Field Inspection Scheduled', 'Rejected'];
+        if ($application_id === '' || !in_array($status, $allowed, true)) {
+            $this->api->respond_error('Choose a valid application and lifecycle status', 400);
+        }
+        if (!$this->Clearance_model->get_by_reference($application_id)) {
+            $this->api->respond_error('Clearance record not found', 404);
+        }
+        $this->Workflow_model->update_clearance_status($application_id, $status);
+        if ($status === 'Rejected') {
+            $this->Workflow_model->set_permit_status($application_id, 'Revoked');
+        }
+        $this->json_response(['message' => 'Clearance status updated']);
+    }
+
+    public function issue_clearance() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $this->require_mpdo($payload);
+        $body = $this->api->body();
+        $application_id = trim((string) ($body['application_id'] ?? ''));
+        $approved_land_use = trim((string) ($body['approved_land_use'] ?? ''));
+        $certificate_type = trim((string) ($body['certificate_type'] ?? ''));
+        $valid_until = trim((string) ($body['valid_until'] ?? ''));
+        $clearance = $this->Clearance_model->get_by_reference($application_id);
+        if (!$clearance) {
+            $this->api->respond_error('Clearance record not found', 404);
+        }
+        if (($clearance['status'] ?? '') === 'Rejected') {
+            $this->api->respond_error('A rejected application cannot be issued', 409);
+        }
+        if ($approved_land_use === '' || strlen($approved_land_use) > 100
+            || !in_array($certificate_type, ['Zoning Clearance', 'Locational Certificate'], true)
+            || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $valid_until)
+            || strtotime($valid_until) === false || $valid_until < date('Y-m-d')) {
+            $this->api->respond_error('Provide an approved land use, certificate type and valid expiration date', 400);
+        }
+        $qr_reference = 'BCO-LC-' . date('Y') . '-' . strtoupper(bin2hex(random_bytes(10)));
+        $this->Workflow_model->issue_clearance(
+            $application_id,
+            $approved_land_use,
+            $certificate_type,
+            $valid_until,
+            $qr_reference
+        );
+        $this->json_response(['qr_reference' => $qr_reference, 'permit_status' => 'Valid'], 201);
+    }
+
+    public function save_inspection() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $body = $this->api->body();
+        $application_id = trim((string) ($body['application_id'] ?? ''));
+        $inspector_name = trim((string) ($body['inspector_name'] ?? ''));
+        $findings = trim((string) ($body['findings'] ?? ''));
+        if (!$this->Clearance_model->get_by_reference($application_id)) {
+            $this->api->respond_error('Clearance record not found', 404);
+        }
+        if ($inspector_name === '' || strlen($inspector_name) > 150 || $findings === '' || strlen($findings) > 5000) {
+            $this->api->respond_error('Inspector name and inspection findings are required', 400);
+        }
+        $latitude = $this->validate_optional_coordinate($body['latitude'] ?? null, -90, 90);
+        $longitude = $this->validate_optional_coordinate($body['longitude'] ?? null, -180, 180);
+        if (($latitude === null) !== ($longitude === null)) {
+            $this->api->respond_error('Provide both latitude and longitude for a geotagged inspection', 400);
+        }
+        $this->Workflow_model->add_inspection([
+            'application_id' => $application_id,
+            'inspector_name' => $inspector_name,
+            'findings' => $findings,
+            'photo_url' => $this->validate_photo_url($body['photo_url'] ?? ''),
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+        ]);
+        $this->json_response(['message' => 'Field inspection submitted'], 201);
+    }
+
+    public function spatial_layers() {
+        $this->api->require_method('GET');
+        $this->api->require_jwt();
+        $this->json_response(['layers' => $this->Workflow_model->get_spatial_layers()]);
+    }
+
+    public function save_spatial_layer() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $this->require_mpdo($payload);
+        $body = $this->api->body();
+        $name = trim((string) ($body['layer_name'] ?? ''));
+        $category = trim((string) ($body['category'] ?? ''));
+        $geojson = $body['geojson'] ?? null;
+        if ($name === '' || strlen($name) > 120 || !in_array($category, ['zoning', 'hazard', 'waterbody'], true)
+            || !is_array($geojson) || !in_array($geojson['type'] ?? '', ['Feature', 'FeatureCollection', 'Polygon', 'MultiPolygon'], true)) {
+            $this->api->respond_error('Provide a layer name, supported category and valid GeoJSON', 400);
+        }
+        $encoded = json_encode($geojson, JSON_UNESCAPED_SLASHES);
+        if ($encoded === false || strlen($encoded) > 5242880) {
+            $this->api->respond_error('GeoJSON layer must be valid and no larger than 5 MB', 400);
+        }
+        $features = ($geojson['type'] ?? '') === 'FeatureCollection'
+            ? ($geojson['features'] ?? [])
+            : [(($geojson['type'] ?? '') === 'Feature') ? $geojson : ['type' => 'Feature', 'geometry' => $geojson]];
+        if (!is_array($features) || empty($features)) {
+            $this->api->respond_error('The GeoJSON layer must contain at least one feature', 400);
+        }
+        foreach ($features as $feature) {
+            $feature_geometry = $feature['geometry'] ?? null;
+            if (!is_array($feature_geometry)) {
+                $this->api->respond_error('Each GeoJSON feature must have a supported geometry', 400);
+            }
+            $this->validate_geometry($feature_geometry);
+        }
+        $this->Workflow_model->save_spatial_layer($name, $category, $encoded);
+        $this->json_response(['message' => 'Planning layer saved']);
+    }
+
+    public function screen_geometry() {
+        $this->api->require_method('POST');
+        $this->api->require_jwt();
+        $body = $this->api->body();
+        $geometry = $this->validate_geometry($body['parcel_geojson'] ?? null);
+        $layers = $this->Workflow_model->get_spatial_layers();
+        $matches = $this->Spatial_model->screen_geometry($geometry, $layers);
+        $this->json_response([
+            'area_sqm' => round($this->Spatial_model->calculate_area($geometry), 2),
+            'layers_available' => count($layers),
+            'matches' => $matches,
+        ]);
+    }
+
+    public function report_summary() {
+        $this->api->require_method('GET');
+        $this->api->require_jwt();
+        $clearances = $this->Clearance_model->get_all();
+        $projects = $this->Project_model->get_all();
+        $by_barangay = [];
+        foreach ($clearances as $row) {
+            $name = (string) ($row['barangay'] ?? 'Unspecified');
+            $by_barangay[$name]['clearances'] = ($by_barangay[$name]['clearances'] ?? 0) + 1;
+        }
+        foreach ($projects as $row) {
+            $name = (string) ($row['barangay'] ?? 'Unspecified');
+            $by_barangay[$name]['projects'] = ($by_barangay[$name]['projects'] ?? 0) + 1;
+        }
+        $this->json_response([
+            'counts' => ['clearances' => count($clearances), 'projects' => count($projects)],
+            'by_barangay' => $by_barangay,
+        ]);
     }
 
     public function map_points() {
