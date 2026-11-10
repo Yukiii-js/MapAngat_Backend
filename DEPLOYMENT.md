@@ -13,6 +13,8 @@ The application uses `migrations`, `roles`, `users`, `refresh_tokens`, `barangay
 
 The spatial-clearance, project progress, field inspection, and GeoJSON layer workflows also require the tables in [`database/005_spatial_workflows.sql`](./database/005_spatial_workflows.sql). Back up the database, then run that additive SQL script in the same MySQL database before deploying the updated API. It does not modify existing records. The equivalent application migration is [`app/migrations/005_create_spatial_workflow_tables.php`](./app/migrations/005_create_spatial_workflow_tables.php); application migrations are disabled by default.
 
+New location-clearance submissions also require the normalized `location_clearances` columns (`application_id`, `applicant_name`, `project_type`, `barangay`, `status`, `lat`, `lng`, and `created_at`). An older table is not rewritten automatically; migrate its existing records and schema before enabling submissions. The API returns a setup error rather than saving a partial application when the required schema is missing. The camera scanner and geotagging require HTTPS and browser permission; the configured Permissions-Policy allows these features for the same-origin app.
+
 To replace the initial password, generate a hash on a trusted machine and update only the hash:
 
 ```sh

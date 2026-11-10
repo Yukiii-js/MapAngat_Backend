@@ -118,7 +118,7 @@ class ApiController extends Controller {
     }
 
     private function valid_coordinates($value) {
-        if (!is_array($value) || count($value) < 2) {
+        if (!is_array($value) || $value === []) {
             return false;
         }
         if (is_numeric($value[0] ?? null) && is_numeric($value[1] ?? null)) {
@@ -438,6 +438,12 @@ class ApiController extends Controller {
     public function create_clearance() {
         $this->api->require_method('POST');
         $this->api->require_jwt();
+        if (!$this->Clearance_model->supports_workflow_create()) {
+            $this->api->respond_error(
+                'Location-clearance workflows are not installed. Apply database/005_spatial_workflows.sql before submitting applications.',
+                503
+            );
+        }
         $body = $this->api->body();
         $applicant = trim((string) ($body['applicant_name'] ?? ''));
         $project_type = trim((string) ($body['project_type'] ?? ''));
@@ -450,7 +456,9 @@ class ApiController extends Controller {
         }
 
         $geometry = $this->validate_geometry($body['parcel_geojson'] ?? null);
-        $layers = $this->Workflow_model->get_spatial_layers();
+        $layers = $this->table_exists('spatial_layers')
+            ? $this->Workflow_model->get_spatial_layers()
+            : [];
         $screening = $this->Spatial_model->screen_geometry($geometry, $layers);
         $area_sqm = $this->Spatial_model->calculate_area($geometry);
         $positions = $geometry['type'] === 'Point'
@@ -535,8 +543,10 @@ class ApiController extends Controller {
         if (!$this->Clearance_model->get_by_reference($application_id)) {
             $this->api->respond_error('Clearance record not found', 404);
         }
-        $this->Workflow_model->update_clearance_status($application_id, $status);
-        if ($status === 'Rejected') {
+        if (!$this->Clearance_model->update_status($application_id, $status)) {
+            $this->api->respond_error('This legacy clearance record cannot be updated because its schema has no supported status field or record ID', 409);
+        }
+        if ($status === 'Rejected' && $this->table_exists('clearance_details')) {
             $this->Workflow_model->set_permit_status($application_id, 'Revoked');
         }
         $this->json_response(['message' => 'Clearance status updated']);
@@ -607,6 +617,9 @@ class ApiController extends Controller {
     public function spatial_layers() {
         $this->api->require_method('GET');
         $this->api->require_jwt();
+        if (!$this->table_exists('spatial_layers')) {
+            $this->json_response(['layers' => []]);
+        }
         $this->json_response(['layers' => $this->Workflow_model->get_spatial_layers()]);
     }
 
@@ -621,6 +634,9 @@ class ApiController extends Controller {
         if ($name === '' || strlen($name) > 120 || !in_array($category, ['zoning', 'hazard', 'waterbody'], true)
             || !is_array($geojson) || !in_array($geojson['type'] ?? '', ['Feature', 'FeatureCollection', 'Polygon', 'MultiPolygon'], true)) {
             $this->api->respond_error('Provide a layer name, supported category and valid GeoJSON', 400);
+        }
+        if (!$this->table_exists('spatial_layers')) {
+            $this->api->respond_error('Spatial workflow tables are not installed. Apply database/005_spatial_workflows.sql first.', 503);
         }
         $encoded = json_encode($geojson, JSON_UNESCAPED_SLASHES);
         if ($encoded === false || strlen($encoded) > 5242880) {
@@ -648,7 +664,9 @@ class ApiController extends Controller {
         $this->api->require_jwt();
         $body = $this->api->body();
         $geometry = $this->validate_geometry($body['parcel_geojson'] ?? null);
-        $layers = $this->Workflow_model->get_spatial_layers();
+        $layers = $this->table_exists('spatial_layers')
+            ? $this->Workflow_model->get_spatial_layers()
+            : [];
         $matches = $this->Spatial_model->screen_geometry($geometry, $layers);
         $this->json_response([
             'area_sqm' => round($this->Spatial_model->calculate_area($geometry), 2),
