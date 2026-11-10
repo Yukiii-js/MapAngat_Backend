@@ -438,9 +438,11 @@ class ApiController extends Controller {
     public function create_clearance() {
         $this->api->require_method('POST');
         $this->api->require_jwt();
-        if (!$this->Clearance_model->supports_workflow_create()) {
+        $schema_issues = $this->Clearance_model->workflow_create_issues();
+        if ($schema_issues !== []) {
             $this->api->respond_error(
-                'The connected database is missing required location-clearance tables or columns. Verify DB_NAME; apply database/005_spatial_workflows.sql only if its tables are absent.',
+                'The connected database is missing: ' . implode(', ', $schema_issues)
+                    . '. Verify the backend DB_NAME points to the database containing the dump (defaultdb); apply database/005_spatial_workflows.sql only if its tables are absent.',
                 503
             );
         }

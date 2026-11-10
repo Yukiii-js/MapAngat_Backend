@@ -33,31 +33,42 @@ class Clearance_model extends Model {
     }
 
     public function supports_workflow_create() {
-        if (!$this->is_available()) {
-            return false;
+        return $this->workflow_create_issues() === [];
+    }
+
+    public function workflow_create_issues() {
+        $required = [
+            'location_clearances' => [
+                'application_id', 'applicant_name', 'project_type', 'barangay',
+                'status', 'lat', 'lng', 'created_at',
+            ],
+            'clearance_details' => [
+                'application_id', 'parcel_geojson', 'area_sqm', 'land_use_category',
+                'approved_land_use', 'permit_valid_until', 'qr_reference', 'permit_status',
+                'certificate_type', 'screening_results', 'created_at', 'updated_at',
+            ],
+        ];
+        $issues = [];
+
+        foreach ($required as $table => $required_columns) {
+            $stmt = $this->db->raw(
+                "SELECT column_name FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ?",
+                [$table]
+            );
+            $columns = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
+
+            if ($columns === []) {
+                $issues[] = $table . ' table';
+                continue;
+            }
+
+            foreach (array_diff($required_columns, $columns) as $column) {
+                $issues[] = $table . '.' . $column;
+            }
         }
 
-        $clearance_columns = $this->columns();
-        $required_clearance_columns = [
-            'application_id', 'applicant_name', 'project_type', 'barangay',
-            'status', 'lat', 'lng', 'created_at',
-        ];
-        if (count(array_intersect($required_clearance_columns, $clearance_columns)) !== count($required_clearance_columns)) {
-            return false;
-        }
-
-        $details_stmt = $this->db->raw(
-            "SELECT column_name FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = ?",
-            ['clearance_details']
-        );
-        $details_columns = array_column($details_stmt->fetchAll(PDO::FETCH_ASSOC), 'column_name');
-        $required_details_columns = [
-            'application_id', 'parcel_geojson', 'area_sqm', 'land_use_category',
-            'approved_land_use', 'permit_valid_until', 'qr_reference', 'permit_status',
-            'certificate_type', 'screening_results', 'created_at', 'updated_at',
-        ];
-        return count(array_intersect($required_details_columns, $details_columns)) === count($required_details_columns);
+        return $issues;
     }
 
     public function get_all() {
