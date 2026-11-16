@@ -79,6 +79,12 @@ $router->post('api/spatial/screen', 'ApiController::screen_geometry');
 $router->get('api/reports/summary', 'ApiController::report_summary');
 $router->get('api/map/points', 'ApiController::map_points');
 $router->get('api/health', 'ApiController::health');
+$router->get('api/external/resident-feed', 'ExternalApiController::resident_feed');
+$router->get('api/admin/external-apis', 'ExternalApiController::admin_apis');
+$router->post('api/admin/external-apis/{key}/sync', 'ExternalApiController::sync');
+$router->patch('api/admin/external-apis/{key}/config', 'ExternalApiController::update_config');
+$router->patch('api/admin/external-events/{id}/visibility', 'ExternalApiController::update_event_visibility');
+$router->patch('api/admin/hdx-datasets/{id}/visibility', 'ExternalApiController::update_dataset_visibility');
 
 // Preflight requests must match the same route as the actual cross-origin request.
 $router->options('api/auth/login', 'ApiController::health');
@@ -100,3 +106,9 @@ $router->options('api/spatial/screen', 'ApiController::health');
 $router->options('api/reports/summary', 'ApiController::health');
 $router->options('api/map/points', 'ApiController::health');
 $router->options('api/health', 'ApiController::health');
+$router->options('api/external/resident-feed', 'ApiController::health');
+$router->options('api/admin/external-apis', 'ApiController::health');
+$router->options('api/admin/external-apis/{key}/sync', 'ApiController::health');
+$router->options('api/admin/external-apis/{key}/config', 'ApiController::health');
+$router->options('api/admin/external-events/{id}/visibility', 'ApiController::health');
+$router->options('api/admin/hdx-datasets/{id}/visibility', 'ApiController::health');

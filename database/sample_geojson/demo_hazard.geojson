@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "name": "DEMO ONLY - sample hazard overlay",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "class": "DEMO ONLY - placeholder hazard area",
+        "demo": true,
+        "source": "Synthetic test data; not an official hazard assessment"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [121.0918, 13.3178],
+            [121.0932, 13.3178],
+            [121.0932, 13.3186],
+            [121.0918, 13.3186],
+            [121.0918, 13.3178]
+          ]
+        ]
+      }
+    }
+  ]
+}
