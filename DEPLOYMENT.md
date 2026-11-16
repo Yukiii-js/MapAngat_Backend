@@ -64,6 +64,7 @@ Generate `APP_KEY`, `JWT_SECRET`, `REFRESH_TOKEN_KEY`, and `LEDGER_SERVICE_KEY` 
 - The health check is `/health`.
 
 The backend calls the ledger over HTTPS using the shared key. Do not put that key in the frontend or commit it to source control. The ledger table must be created with the SQL script before starting the Node service.
+Set the backend's `LEDGER_SERVICE_URL` to the ledger service's HTTPS origin only (for example, `https://your-ledger-service.example.com`), without `/health` or `/internal/anchor`. Check that `GET <LEDGER_SERVICE_URL>/health` returns JSON with `"status":"ok"` before testing fingerprint submission. If the API reports a non-JSON ledger response, inspect the backend log for the upstream HTTP status, content type, and host; an HTML response usually means the URL points to the wrong service or a hosting proxy/error page.
 
 ## Document fingerprint workflow
 

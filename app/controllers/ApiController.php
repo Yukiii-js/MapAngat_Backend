@@ -248,7 +248,7 @@ class ApiController extends Controller {
         $context = stream_context_create([
             'http' => [
                 'method' => 'POST',
-                'header' => "Content-Type: application/json\r\nX-API-Key: {$service_key}\r\n",
+                'header' => "Content-Type: application/json\r\nAccept: application/json\r\nX-API-Key: {$service_key}\r\n",
                 'content' => json_encode($payload, JSON_UNESCAPED_SLASHES),
                 'timeout' => 10,
                 'ignore_errors' => true,
@@ -261,16 +261,28 @@ class ApiController extends Controller {
         }
 
         $status = 0;
+        $content_type = '';
         foreach ($http_response_header ?? [] as $header) {
             if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $matches)) {
                 $status = (int) $matches[1];
-                break;
+            } elseif (stripos($header, 'Content-Type:') === 0) {
+                $content_type = trim(substr($header, strlen('Content-Type:')));
             }
         }
 
-        $result = json_decode($response_body, true);
+        $result = json_decode(ltrim($response_body, "\xEF\xBB\xBF \t\n\r"), true);
         if (!is_array($result)) {
-            $this->api->respond_error('Document ledger service returned an invalid response', 502);
+            $service_host = $service_url['host'] ?? 'unknown';
+            error_log(sprintf(
+                'Ledger service returned a non-JSON response (HTTP %d, Content-Type: %s, host: %s).',
+                $status,
+                $content_type !== '' ? $content_type : 'not provided',
+                $service_host
+            ));
+            $this->api->respond_error(
+                'The ledger service returned a non-JSON response. Check that LEDGER_SERVICE_URL points to the deployed ledger service root and that its /health endpoint is healthy.',
+                502
+            );
         }
         if ($status < 200 || $status >= 300) {
             $this->api->respond_error($result['error'] ?? 'Document ledger request failed', 502);
