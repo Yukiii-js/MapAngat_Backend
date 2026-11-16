@@ -65,6 +65,7 @@ $router->post('api/ledger/anchor', 'ApiController::anchor_document');
 $router->post('api/ledger/verify', 'ApiController::verify_document');
 $router->get('api/dashboard/stats', 'ApiController::dashboard_stats');
 $router->get('api/projects', 'ApiController::projects');
+$router->post('api/projects', 'ApiController::create_project');
 $router->get('api/projects/updates', 'ApiController::project_updates');
 $router->post('api/projects/update', 'ApiController::save_project_update');
 $router->get('api/clearances', 'ApiController::clearances');

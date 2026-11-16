@@ -356,6 +356,66 @@ class ApiController extends Controller {
         $this->json_response(['projects' => $projects]);
     }
 
+    public function create_project() {
+        $this->api->require_method('POST');
+        $payload = $this->api->require_jwt();
+        $this->require_mpdo($payload);
+        $schema_issues = $this->Project_model->project_create_issues();
+        if ($schema_issues !== []) {
+            $this->api->respond_error(
+                'Project creation requires: ' . implode(', ', $schema_issues)
+                    . '. Apply the project metrics schema from database/005_spatial_workflows.sql.',
+                503
+            );
+        }
+
+        $body = $this->api->body();
+        $project_name = trim((string) ($body['project_name'] ?? ''));
+        $barangay = trim((string) ($body['barangay'] ?? ''));
+        $status = trim((string) ($body['status'] ?? ''));
+        $inspection_date = trim((string) ($body['inspection_date'] ?? ''));
+        $progress = $body['progress'] ?? null;
+        $target_progress = $body['target_progress'] ?? null;
+        $allocated_budget = $body['allocated_budget'] ?? null;
+        $spent_budget = $body['spent_budget'] ?? null;
+
+        if ($project_name === '' || strlen($project_name) > 150
+            || $barangay === '' || strlen($barangay) > 100
+            || !in_array($status, ['On track', 'At risk', 'Delayed'], true)
+            || !is_numeric($progress) || !is_finite((float) $progress) || (float) $progress < 0 || (float) $progress > 100
+            || !is_numeric($target_progress) || !is_finite((float) $target_progress) || (float) $target_progress < 0 || (float) $target_progress > 100
+            || !is_numeric($allocated_budget) || !is_finite((float) $allocated_budget) || (float) $allocated_budget < 0 || (float) $allocated_budget > 999999999999.99
+            || !is_numeric($spent_budget) || !is_finite((float) $spent_budget) || (float) $spent_budget < 0 || (float) $spent_budget > 999999999999.99
+            || (float) $spent_budget > (float) $allocated_budget) {
+            $this->api->respond_error('Enter a project name, barangay, valid status, progress and budget values', 400);
+        }
+        if ($inspection_date !== ''
+            && (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $inspection_date)
+                || !checkdate((int) substr($inspection_date, 5, 2), (int) substr($inspection_date, 8, 2), (int) substr($inspection_date, 0, 4)))) {
+            $this->api->respond_error('Enter a valid inspection date', 400);
+        }
+
+        $latitude = $this->validate_optional_coordinate($body['lat'] ?? null, -90, 90);
+        $longitude = $this->validate_optional_coordinate($body['lng'] ?? null, -180, 180);
+        if (($latitude === null) !== ($longitude === null)) {
+            $this->api->respond_error('Provide both latitude and longitude for a map location', 400);
+        }
+
+        $project_id = $this->Project_model->create_project([
+            'project_name' => $project_name,
+            'barangay' => $barangay,
+            'status' => $status,
+            'progress' => (int) round((float) $progress),
+            'target_progress' => (float) $target_progress,
+            'allocated_budget' => (float) $allocated_budget,
+            'spent_budget' => (float) $spent_budget,
+            'inspection_date' => $inspection_date !== '' ? $inspection_date : null,
+            'lat' => $latitude,
+            'lng' => $longitude,
+        ]);
+        $this->json_response(['project_id' => $project_id, 'message' => 'Project added to the portfolio'], 201);
+    }
+
     public function project_updates() {
         $this->api->require_method('GET');
         $this->api->require_jwt();
@@ -538,7 +598,7 @@ class ApiController extends Controller {
         $body = $this->api->body();
         $application_id = trim((string) ($body['application_id'] ?? ''));
         $status = trim((string) ($body['status'] ?? ''));
-        $allowed = ['Submitted', 'Under Review', 'Field Inspection Scheduled', 'Rejected'];
+        $allowed = ['Submitted', 'Under Review', 'Field Inspection Scheduled', 'Approved', 'Rejected'];
         if ($application_id === '' || !in_array($status, $allowed, true)) {
             $this->api->respond_error('Choose a valid application and lifecycle status', 400);
         }
@@ -567,8 +627,8 @@ class ApiController extends Controller {
         if (!$clearance) {
             $this->api->respond_error('Clearance record not found', 404);
         }
-        if (($clearance['status'] ?? '') === 'Rejected') {
-            $this->api->respond_error('A rejected application cannot be issued', 409);
+        if (strcasecmp((string) ($clearance['status'] ?? ''), 'Approved') !== 0) {
+            $this->api->respond_error('The application must be approved before a certificate can be issued', 409);
         }
         if ($approved_land_use === '' || strlen($approved_land_use) > 100
             || !in_array($certificate_type, ['Zoning Clearance', 'Locational Certificate'], true)
