@@ -229,11 +229,14 @@ class ApiController extends Controller {
     }
 
     private function call_ledger_service($endpoint, $payload) {
-        $base_url = rtrim((string) getenv('LEDGER_SERVICE_URL'), '/');
+        $base_url = trim((string) getenv('LEDGER_SERVICE_URL'));
         $service_key = (string) getenv('LEDGER_SERVICE_KEY');
         if ($base_url === '' || $service_key === '') {
             $this->api->respond_error('Document ledger service is not configured', 503);
         }
+
+        $base_url = preg_replace('#/(health|internal/(anchor|verify))/?$#i', '', $base_url);
+        $base_url = rtrim($base_url, '/');
 
         $service_url = parse_url($base_url);
         $local_http = is_array($service_url)
@@ -245,50 +248,69 @@ class ApiController extends Controller {
             $this->api->respond_error('Document ledger service URL must use HTTPS', 503);
         }
 
-        $context = stream_context_create([
-            'http' => [
-                'method' => 'POST',
-                'header' => "Content-Type: application/json\r\nAccept: application/json\r\nX-API-Key: {$service_key}\r\n",
-                'content' => json_encode($payload, JSON_UNESCAPED_SLASHES),
-                'timeout' => 10,
-                'ignore_errors' => true,
-            ],
-        ]);
-        $response_body = @file_get_contents($base_url . $endpoint, false, $context);
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $context = stream_context_create([
+                'http' => [
+                    'method' => 'POST',
+                    'header' => "Content-Type: application/json\r\nAccept: application/json\r\nX-API-Key: {$service_key}\r\n",
+                    'content' => json_encode($payload, JSON_UNESCAPED_SLASHES),
+                    'timeout' => 30,
+                    'ignore_errors' => true,
+                ],
+            ]);
+            $response_body = @file_get_contents($base_url . $endpoint, false, $context);
 
-        if ($response_body === false) {
-            $this->api->respond_error('Document ledger service could not be reached', 503);
-        }
+            if ($response_body === false) {
+                if ($attempt === 1) {
+                    sleep(2);
+                    continue;
+                }
+                $this->api->respond_error('Document ledger service could not be reached', 503);
+            }
 
-        $status = 0;
-        $content_type = '';
-        foreach ($http_response_header ?? [] as $header) {
-            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $matches)) {
-                $status = (int) $matches[1];
-            } elseif (stripos($header, 'Content-Type:') === 0) {
-                $content_type = trim(substr($header, strlen('Content-Type:')));
+            $status = 0;
+            $content_type = '';
+            foreach ($http_response_header ?? [] as $header) {
+                if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $matches)) {
+                    $status = (int) $matches[1];
+                } elseif (stripos($header, 'Content-Type:') === 0) {
+                    $content_type = trim(substr($header, strlen('Content-Type:')));
+                }
+            }
+
+            $result = json_decode(ltrim($response_body, "\xEF\xBB\xBF \t\n\r"), true);
+            if (is_array($result) && ($status >= 200 && $status < 300)) {
+                return $result;
+            }
+
+            if (($status === 429 || $status === 503 || $status === 502 || $status === 500) && $attempt === 1) {
+                sleep(2);
+                continue;
+            }
+
+            if (!is_array($result)) {
+                $service_host = $service_url['host'] ?? 'unknown';
+                error_log(sprintf(
+                    'Ledger service returned a non-JSON response (HTTP %d, Content-Type: %s, host: %s).',
+                    $status,
+                    $content_type !== '' ? $content_type : 'not provided',
+                    $service_host
+                ));
+                $this->api->respond_error(
+                    'The ledger service is warming up or returned a non-JSON response. Please retry in a moment.',
+                    429
+                );
+            }
+
+            if ($status < 200 || $status >= 300) {
+                $this->api->respond_error($result['error'] ?? 'Document ledger request failed', 502);
             }
         }
 
-        $result = json_decode(ltrim($response_body, "\xEF\xBB\xBF \t\n\r"), true);
-        if (!is_array($result)) {
-            $service_host = $service_url['host'] ?? 'unknown';
-            error_log(sprintf(
-                'Ledger service returned a non-JSON response (HTTP %d, Content-Type: %s, host: %s).',
-                $status,
-                $content_type !== '' ? $content_type : 'not provided',
-                $service_host
-            ));
-            $this->api->respond_error(
-                'The ledger service returned a non-JSON response. Check that LEDGER_SERVICE_URL points to the deployed ledger service root and that its /health endpoint is healthy.',
-                502
-            );
-        }
-        if ($status < 200 || $status >= 300) {
-            $this->api->respond_error($result['error'] ?? 'Document ledger request failed', 502);
-        }
-
-        return $result;
+        $this->api->respond_error(
+            'The ledger service is unavailable right now. Please retry in a moment.',
+            503
+        );
     }
 
     private function validate_ledger_document($body) {
