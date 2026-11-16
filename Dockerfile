@@ -2,10 +2,7 @@ ARG PHP_VERSION=8.4
 
 FROM php:${PHP_VERSION}-apache
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libcurl4-openssl-dev \
-    && docker-php-ext-install pdo pdo_mysql curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN docker-php-ext-install pdo pdo_mysql
 RUN a2enmod rewrite
 RUN sed -ri '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
 

@@ -781,18 +781,33 @@ class ApiController extends Controller {
 
         $clearanceRows = $this->Clearance_model->get_all();
         foreach ($clearanceRows as $row) {
-            if (empty($row['lat']) || empty($row['lng'])) {
+            if (strcasecmp(trim((string) ($row['status'] ?? '')), 'Approved') !== 0) {
+                continue;
+            }
+
+            $geometry = json_decode((string) ($row['parcel_geojson'] ?? ''), true);
+            if (!is_array($geometry)
+                || !in_array($geometry['type'] ?? '', ['Point', 'Polygon', 'MultiPolygon'], true)) {
+                $geometry = null;
+            }
+            $latitude = is_numeric($row['lat'] ?? null) ? (float) $row['lat'] : null;
+            $longitude = is_numeric($row['lng'] ?? null) ? (float) $row['lng'] : null;
+            if ($geometry === null && ($latitude === null || $longitude === null)) {
                 continue;
             }
 
             $points[] = [
                 'id' => 'clearance-' . ($row['id'] ?? uniqid()),
+                'reference' => $row['application_id'] ?? '',
                 'name' => ($row['applicant_name'] ?? 'Applicant') . ' - ' . ($row['project_type'] ?? $row['business_name'] ?? 'Permit'),
                 'type' => 'clearance',
-                'lat' => (float) ($row['lat'] ?? 0),
-                'lng' => (float) ($row['lng'] ?? 0),
+                'lat' => $latitude,
+                'lng' => $longitude,
+                'geometry' => $geometry,
                 'barangay' => $row['barangay'] ?? '',
-                'status' => $row['status'] ?? 'Pending'
+                'status' => $row['status'] ?? 'Approved',
+                'approved_land_use' => $row['approved_land_use'] ?? '',
+                'permit_valid_until' => $row['permit_valid_until'] ?? null,
             ];
         }
 
